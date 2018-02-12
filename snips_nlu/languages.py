@@ -23,6 +23,7 @@ class Language(Enum):
     FR = {ISO_CODE: "fr", RUSTLING_CODE: "FR"}
     DE = {ISO_CODE: "de", RUSTLING_CODE: "DE"}
     KO = {ISO_CODE: "ko", RUSTLING_CODE: "KO"}
+    JA = {ISO_CODE: "ja", RUSTLING_CODE: "JA"}
 
     @property
     def iso_code(self):
