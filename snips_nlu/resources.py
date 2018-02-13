@@ -47,6 +47,10 @@ RESOURCE_INDEX = {
         ],
         STOP_WORDS: "stop_words.txt",
         NOISE: "noise.txt",
+    },
+    Language.JA: {
+        STOP_WORDS: "stop_words.txt",
+        NOISE: "noise.txt",
     }
 }
 
