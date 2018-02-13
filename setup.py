@@ -23,7 +23,7 @@ required = [
     "builtin_entities_ontology==0.5.3",
     "semantic_version==2.6.0",
     "rustling==8.4.1",
-    "nlu_utils==0.5.3",
+    "nlu_utils==0.5.4",
     "num2words==0.5.6"
 ]
 
