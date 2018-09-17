@@ -1,34 +1,36 @@
 # coding=utf-8
 from __future__ import unicode_literals
 
-import io
-import os
 from builtins import range
-
-from mock import patch, MagicMock
+from mock import MagicMock
+from pathlib import Path
+from sklearn_crfsuite import CRF
 
 from snips_nlu.constants import (
-    RES_MATCH_RANGE, VALUE, ENTITY, DATA, TEXT, SLOT_NAME, LANGUAGE_EN,
-    SNIPS_DATETIME, END, START, ENTITY_KIND)
-from snips_nlu.dataset import validate_and_format_dataset
+    DATA, END, ENTITY, ENTITY_KIND, LANGUAGE_EN, RES_MATCH_RANGE, SLOT_NAME,
+    SNIPS_DATETIME, START, TEXT, VALUE)
 from snips_nlu.pipeline.configs import CRFSlotFillerConfig
+from snips_nlu.preprocessing import Token, tokenize
 from snips_nlu.result import unresolved_slot
-from snips_nlu.slot_filler.crf_slot_filler import (
-    CRFSlotFiller, _spans_to_tokens_indexes, _filter_overlapping_builtins,
-    _generate_slots_permutations, _exhaustive_slots_permutations)
+from snips_nlu.slot_filler.crf_slot_filler import (CRFSlotFiller,
+                                                   _disambiguate_builtin_entities,
+                                                   _ensure_safe,
+                                                   _filter_overlapping_builtins,
+                                                   _get_slots_permutations,
+                                                   _spans_to_tokens_indexes)
 from snips_nlu.slot_filler.crf_utils import (
-    TaggingScheme, BEGINNING_PREFIX, INSIDE_PREFIX)
+    BEGINNING_PREFIX, INSIDE_PREFIX, TaggingScheme)
 from snips_nlu.slot_filler.feature_factory import (
-    IsDigitFactory, ShapeNgramFactory, NgramFactory)
+    IsDigitFactory, NgramFactory, ShapeNgramFactory)
 from snips_nlu.tests.utils import (
-    SAMPLE_DATASET, BEVERAGE_DATASET, TEST_PATH, WEATHER_DATASET, SnipsTest)
-from snips_nlu.tokenization import tokenize, Token
+    BEVERAGE_DATASET, FixtureTest, SAMPLE_DATASET, TEST_PATH, WEATHER_DATASET)
+from snips_nlu.utils import NotTrained
 
 
-class TestCRFSlotFiller(SnipsTest):
+class TestCRFSlotFiller(FixtureTest):
     def test_should_get_slots(self):
         # Given
-        dataset = validate_and_format_dataset(BEVERAGE_DATASET)
+        dataset = BEVERAGE_DATASET
         config = CRFSlotFillerConfig(random_seed=42)
         intent = "MakeTea"
         slot_filler = CRFSlotFiller(config)
@@ -47,7 +49,7 @@ class TestCRFSlotFiller(SnipsTest):
 
     def test_should_get_builtin_slots(self):
         # Given
-        dataset = validate_and_format_dataset(WEATHER_DATASET)
+        dataset = WEATHER_DATASET
         config = CRFSlotFillerConfig(random_seed=42)
         intent = "SearchWeatherForecast"
         slot_filler = CRFSlotFiller(config)
@@ -69,12 +71,76 @@ class TestCRFSlotFiller(SnipsTest):
         ]
         self.assertListEqual(expected_slots, slots)
 
+    def test_should_not_use_crf_when_dataset_with_no_slots(self):
+        # Given
+        dataset = {
+            "language": "en",
+            "intents": {
+                "intent1": {
+                    "utterances": [
+                        {
+                            "data": [
+                                {
+                                    "text": "This is an utterance without "
+                                            "slots"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            "entities": {}
+        }
+        slot_filler = CRFSlotFiller()
+        mock_compute_features = MagicMock()
+        slot_filler.compute_features = mock_compute_features
+
+        # When
+        slot_filler.fit(dataset, "intent1")
+        slots = slot_filler.get_slots("This is an utterance without slots")
+
+        # Then
+        mock_compute_features.assert_not_called()
+        self.assertListEqual([], slots)
+
+    def test_should_compute_sequence_probability_when_no_slots(self):
+        # Given
+        dataset = {
+            "language": "en",
+            "intents": {
+                "intent1": {
+                    "utterances": [
+                        {
+                            "data": [
+                                {
+                                    "text": "This is an utterance without "
+                                            "slots"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            "entities": {}
+        }
+        slot_filler = CRFSlotFiller().fit(dataset, "intent1")
+        tokens = tokenize("hello world foo bar", "en")
+
+        # When
+        res1 = slot_filler.get_sequence_probability(
+            tokens, ["O", "O", "O", "O"])
+        res2 = slot_filler.get_sequence_probability(
+            tokens, ["O", "O", "B-location", "O"])
+
+        # Then
+        self.assertEqual(1.0, res1)
+        self.assertEqual(0.0, res2)
+
     def test_should_parse_naughty_strings(self):
         # Given
-        dataset = validate_and_format_dataset(SAMPLE_DATASET)
-        naughty_strings_path = os.path.join(TEST_PATH, "resources",
-                                            "naughty_strings.txt")
-        with io.open(naughty_strings_path, encoding='utf8') as f:
+        dataset = SAMPLE_DATASET
+        naughty_strings_path = TEST_PATH / "resources" / "naughty_strings.txt"
+        with naughty_strings_path.open(encoding='utf8') as f:
             naughty_strings = [line.strip("\n") for line in f.readlines()]
 
         # When
@@ -85,11 +151,35 @@ class TestCRFSlotFiller(SnipsTest):
             with self.fail_if_exception("Naughty string crashes"):
                 slot_filler.get_slots(s)
 
+    def test_should_not_get_slots_when_not_fitted(self):
+        # Given
+        slot_filler = CRFSlotFiller()
+
+        # When / Then
+        self.assertFalse(slot_filler.fitted)
+        with self.assertRaises(NotTrained):
+            slot_filler.get_slots("foobar")
+
+    def test_should_not_get_sequence_probability_when_not_fitted(self):
+        # Given
+        slot_filler = CRFSlotFiller()
+
+        # When / Then
+        with self.assertRaises(NotTrained):
+            slot_filler.get_sequence_probability(tokens=[], labels=[])
+
+    def test_should_not_log_weights_when_not_fitted(self):
+        # Given
+        slot_filler = CRFSlotFiller()
+
+        # When / Then
+        with self.assertRaises(NotTrained):
+            slot_filler.log_weights()
+
     def test_should_fit_with_naughty_strings_no_tags(self):
         # Given
-        naughty_strings_path = os.path.join(TEST_PATH, "resources",
-                                            "naughty_strings.txt")
-        with io.open(naughty_strings_path, encoding='utf8') as f:
+        naughty_strings_path = TEST_PATH / "resources" / "naughty_strings.txt"
+        with naughty_strings_path.open(encoding='utf8') as f:
             naughty_strings = [line.strip("\n") for line in f.readlines()]
 
         utterances = [{DATA: [{TEXT: naughty_string}]} for naughty_string in
@@ -104,7 +194,6 @@ class TestCRFSlotFiller(SnipsTest):
             },
             "entities": dict(),
             "language": "en",
-            "snips_nlu_version": "0.0.1"
         }
 
         # Then
@@ -137,10 +226,7 @@ class TestCRFSlotFiller(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.0.1"
         }
-
-        naughty_dataset = validate_and_format_dataset(naughty_dataset)
 
         # Then
         with self.fail_if_exception("Naughty string make NLU crash"):
@@ -160,13 +246,13 @@ class TestCRFSlotFiller(SnipsTest):
 
     def test_should_get_slots_after_deserialization(self):
         # Given
-        dataset = validate_and_format_dataset(BEVERAGE_DATASET)
+        dataset = BEVERAGE_DATASET
         config = CRFSlotFillerConfig(random_seed=42)
         intent = "MakeTea"
         slot_filler = CRFSlotFiller(config)
         slot_filler.fit(dataset, intent)
-        deserialized_slot_filler = CRFSlotFiller.from_dict(
-            slot_filler.to_dict())
+        slot_filler.persist(self.tmp_file_path)
+        deserialized_slot_filler = CRFSlotFiller.from_path(self.tmp_file_path)
 
         # When
         slots = deserialized_slot_filler.get_slots("make me two cups of tea")
@@ -200,25 +286,24 @@ class TestCRFSlotFiller(SnipsTest):
         slot_filler = CRFSlotFiller(config)
 
         # When
-        actual_slot_filler_dict = slot_filler.to_dict()
+        slot_filler.persist(self.tmp_file_path)
 
         # Then
+        metadata_path = self.tmp_file_path / "metadata.json"
+        self.assertJsonContent(metadata_path, {"unit_name": "crf_slot_filler"})
+
         expected_slot_filler_dict = {
-            "unit_name": "crf_slot_filler",
-            "crf_model_data": None,
+            "crf_model_file": None,
             "language_code": None,
             "config": config.to_dict(),
             "intent": None,
             "slot_name_mapping": None,
         }
-        self.assertDictEqual(actual_slot_filler_dict,
-                             expected_slot_filler_dict)
+        slot_filler_path = self.tmp_file_path / "slot_filler.json"
+        self.assertJsonContent(slot_filler_path, expected_slot_filler_dict)
 
-    @patch('snips_nlu.slot_filler.crf_slot_filler._deserialize_crf_model')
-    def test_should_be_deserializable_before_fit(self,
-                                                 mock_deserialize_crf_model):
+    def test_should_be_deserializable_before_fit(self):
         # Given
-        mock_deserialize_crf_model.return_value = None
         features_factories = [
             {
                 "factory_name": ShapeNgramFactory.name,
@@ -235,15 +320,20 @@ class TestCRFSlotFiller(SnipsTest):
             feature_factory_configs=features_factories)
         slot_filler_dict = {
             "unit_name": "crf_slot_filler",
-            "crf_model_data": None,
+            "crf_model_file": None,
             "language_code": None,
             "intent": None,
             "slot_name_mapping": None,
             "config": slot_filler_config.to_dict()
         }
+        metadata = {"unit_name": "crf_slot_filler"}
+        self.tmp_file_path.mkdir()
+        self.writeJsonContent(self.tmp_file_path / "metadata.json", metadata)
+        self.writeJsonContent(self.tmp_file_path / "slot_filler.json",
+                              slot_filler_dict)
 
         # When
-        slot_filler = CRFSlotFiller.from_dict(slot_filler_dict)
+        slot_filler = CRFSlotFiller.from_path(self.tmp_file_path)
 
         # Then
         expected_features_factories = [
@@ -273,10 +363,8 @@ class TestCRFSlotFiller(SnipsTest):
         self.assertDictEqual(expected_config.to_dict(),
                              slot_filler.config.to_dict())
 
-    @patch('snips_nlu.slot_filler.crf_slot_filler._serialize_crf_model')
-    def test_should_be_serializable(self, mock_serialize_crf_model):
+    def test_should_be_serializable(self):
         # Given
-        mock_serialize_crf_model.return_value = "mocked_crf_model_data"
         features_factories = [
             {
                 "factory_name": ShapeNgramFactory.name,
@@ -292,16 +380,22 @@ class TestCRFSlotFiller(SnipsTest):
         config = CRFSlotFillerConfig(
             tagging_scheme=TaggingScheme.BILOU,
             feature_factory_configs=features_factories)
-        dataset = validate_and_format_dataset(SAMPLE_DATASET)
+        dataset = SAMPLE_DATASET
 
         slot_filler = CRFSlotFiller(config)
         intent = "dummy_intent_1"
         slot_filler.fit(dataset, intent=intent)
 
         # When
-        actual_slot_filler_dict = slot_filler.to_dict()
+        slot_filler.persist(self.tmp_file_path)
 
         # Then
+        metadata_path = self.tmp_file_path / "metadata.json"
+        self.assertJsonContent(metadata_path, {"unit_name": "crf_slot_filler"})
+
+        expected_crf_file = Path(slot_filler.crf_model.modelfile.name).name
+        self.assertTrue((self.tmp_file_path / expected_crf_file).exists())
+
         expected_feature_factories = [
             {
                 "factory_name": ShapeNgramFactory.name,
@@ -318,8 +412,7 @@ class TestCRFSlotFiller(SnipsTest):
             tagging_scheme=TaggingScheme.BILOU,
             feature_factory_configs=expected_feature_factories)
         expected_slot_filler_dict = {
-            "unit_name": "crf_slot_filler",
-            "crf_model_data": "mocked_crf_model_data",
+            "crf_model_file": expected_crf_file,
             "language_code": "en",
             "config": expected_config.to_dict(),
             "intent": intent,
@@ -329,14 +422,12 @@ class TestCRFSlotFiller(SnipsTest):
                 "dummy_slot_name3": "dummy_entity_2",
             }
         }
-        self.assertDictEqual(actual_slot_filler_dict,
-                             expected_slot_filler_dict)
+        slot_filler_path = self.tmp_file_path / "slot_filler.json"
+        self.assertJsonContent(slot_filler_path, expected_slot_filler_dict)
 
-    @patch('snips_nlu.slot_filler.crf_slot_filler._deserialize_crf_model')
-    def test_should_be_deserializable(self, mock_deserialize_crf_model):
+    def test_should_be_deserializable(self):
         # Given
         language = LANGUAGE_EN
-        mock_deserialize_crf_model.return_value = None
         feature_factories = [
             {
                 "factory_name": ShapeNgramFactory.name,
@@ -353,7 +444,7 @@ class TestCRFSlotFiller(SnipsTest):
             feature_factory_configs=feature_factories)
         slot_filler_dict = {
             "unit_name": "crf_slot_filler",
-            "crf_model_data": "mocked_crf_model_data",
+            "crf_model_file": "foobar.crfsuite",
             "language_code": "en",
             "intent": "dummy_intent_1",
             "slot_name_mapping": {
@@ -363,12 +454,18 @@ class TestCRFSlotFiller(SnipsTest):
             },
             "config": slot_filler_config.to_dict()
         }
+        metadata = {"unit_name": "crf_slot_filler"}
+        self.tmp_file_path.mkdir()
+        self.writeJsonContent(self.tmp_file_path / "metadata.json", metadata)
+        self.writeJsonContent(self.tmp_file_path / "slot_filler.json",
+                              slot_filler_dict)
+        self.writeFileContent(self.tmp_file_path / "foobar.crfsuite",
+                              "foo bar")
+
         # When
-        slot_filler = CRFSlotFiller.from_dict(slot_filler_dict)
+        slot_filler = CRFSlotFiller.from_path(self.tmp_file_path)
 
         # Then
-        mock_deserialize_crf_model.assert_called_once_with(
-            "mocked_crf_model_data")
         expected_language = LANGUAGE_EN
         expected_feature_factories = [
             {
@@ -397,6 +494,106 @@ class TestCRFSlotFiller(SnipsTest):
                          expected_slot_name_mapping)
         self.assertDictEqual(expected_config.to_dict(),
                              slot_filler.config.to_dict())
+        crf_path = Path(slot_filler.crf_model.modelfile.name)
+        self.assertFileContent(crf_path, "foo bar")
+
+    def test_should_be_serializable_when_fitted_without_slots(self):
+        # Given
+        features_factories = [
+            {
+                "factory_name": ShapeNgramFactory.name,
+                "args": {"n": 1},
+                "offsets": [0]
+            },
+            {
+                "factory_name": IsDigitFactory.name,
+                "args": {},
+                "offsets": [-1, 0]
+            }
+        ]
+        config = CRFSlotFillerConfig(
+            tagging_scheme=TaggingScheme.BILOU,
+            feature_factory_configs=features_factories)
+        dataset = {
+            "language": "en",
+            "intents": {
+                "intent1": {
+                    "utterances": [
+                        {
+                            "data": [
+                                {
+                                    "text": "This is an utterance without "
+                                            "slots"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            "entities": {}
+        }
+
+        slot_filler = CRFSlotFiller(config)
+        slot_filler.fit(dataset, intent="intent1")
+
+        # When
+        slot_filler.persist(self.tmp_file_path)
+
+        # Then
+        metadata_path = self.tmp_file_path / "metadata.json"
+        self.assertJsonContent(metadata_path, {"unit_name": "crf_slot_filler"})
+        self.assertIsNone(slot_filler.crf_model)
+
+    def test_should_be_deserializable_when_fitted_without_slots(self):
+        # Given
+        dataset = {
+            "language": "en",
+            "intents": {
+                "intent1": {
+                    "utterances": [
+                        {
+                            "data": [
+                                {
+                                    "text": "This is an utterance without "
+                                            "slots"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            "entities": {}
+        }
+
+        slot_filler = CRFSlotFiller()
+        slot_filler.fit(dataset, intent="intent1")
+        slot_filler.persist(self.tmp_file_path)
+        loaded_slot_filler = CRFSlotFiller.from_path(self.tmp_file_path)
+
+        # When
+        slots = loaded_slot_filler.get_slots(
+            "This is an utterance without slots")
+
+        # Then
+        self.assertListEqual([], slots)
+
+    def test_should_be_serializable_into_bytearray(self):
+        # Given
+        dataset = BEVERAGE_DATASET
+        slot_filler = CRFSlotFiller().fit(dataset, "MakeTea")
+
+        # When
+        slot_filler_bytes = slot_filler.to_byte_array()
+        loaded_slot_filler = CRFSlotFiller.from_byte_array(slot_filler_bytes)
+        slots = loaded_slot_filler.get_slots("make me two cups of tea")
+
+        # Then
+        expected_slots = [
+            unresolved_slot(match_range={START: 8, END: 11},
+                            value='two',
+                            entity='snips/number',
+                            slot_name='number_of_cups')]
+        self.assertListEqual(expected_slots, slots)
 
     def test_should_compute_features(self):
         # Given
@@ -417,7 +614,7 @@ class TestCRFSlotFiller(SnipsTest):
         slot_filler = CRFSlotFiller(slot_filler_config)
 
         tokens = tokenize("foo hello world bar", LANGUAGE_EN)
-        dataset = validate_and_format_dataset(SAMPLE_DATASET)
+        dataset = SAMPLE_DATASET
         slot_filler.fit(dataset, intent="dummy_intent_1")
 
         # When
@@ -441,9 +638,9 @@ class TestCRFSlotFiller(SnipsTest):
             {START: 9, END: 15}
         ]
         tokens = [
-            Token(value="abc", start=0, end=3, stem="abc"),
-            Token(value="def", start=4, end=7, stem="def"),
-            Token(value="ghi", start=10, end=13, stem="ghi")
+            Token(value="abc", start=0, end=3),
+            Token(value="def", start=4, end=7),
+            Token(value="ghi", start=10, end=13)
         ]
 
         # When
@@ -525,6 +722,26 @@ class TestCRFSlotFiller(SnipsTest):
                       'O',
                       'O']
 
+            tags_8 = ['O',
+                      'O',
+                      'O',
+                      'O',
+                      '%sstart_date' % BEGINNING_PREFIX,
+                      '%sstart_date' % INSIDE_PREFIX,
+                      'O',
+                      '%sstart_date' % BEGINNING_PREFIX,
+                      '%sstart_date' % INSIDE_PREFIX]
+
+            tags_9 = ['O',
+                      'O',
+                      'O',
+                      'O',
+                      '%send_date' % BEGINNING_PREFIX,
+                      '%send_date' % INSIDE_PREFIX,
+                      'O',
+                      '%send_date' % BEGINNING_PREFIX,
+                      '%send_date' % INSIDE_PREFIX]
+
             if tags_ == tags_1:
                 return 0.6
             elif tags_ == tags_2:
@@ -539,11 +756,14 @@ class TestCRFSlotFiller(SnipsTest):
                 return 0.0
             elif tags_ == tags_7:
                 return 0.0
+            elif tags_ == tags_8:
+                return 0.5
+            elif tags_ == tags_9:
+                return 0.5
             else:
                 raise ValueError("Unexpected tag sequence: %s" % tags_)
 
-        slot_filler_config = CRFSlotFillerConfig(
-            random_seed=42, exhaustive_permutations_threshold=2)
+        slot_filler_config = CRFSlotFillerConfig(random_seed=42)
         slot_filler = CRFSlotFiller(config=slot_filler_config)
         slot_filler.language = LANGUAGE_EN
         slot_filler.intent = "intent1"
@@ -607,133 +827,103 @@ class TestCRFSlotFiller(SnipsTest):
         ]
         self.assertEqual(entities, expected_entities)
 
-    def test_exhaustive_slots_permutations(self):
+    def test_should_disambiguate_builtin_entities(self):
         # Given
-        n_builtins = 2
-        possible_slots_names = ["a", "b"]
+        builtin_entities = [
+            {RES_MATCH_RANGE: {START: 7, END: 10}},
+            {RES_MATCH_RANGE: {START: 9, END: 15}},
+            {RES_MATCH_RANGE: {START: 10, END: 17}},
+            {RES_MATCH_RANGE: {START: 12, END: 19}},
+            {RES_MATCH_RANGE: {START: 9, END: 15}},
+            {RES_MATCH_RANGE: {START: 0, END: 5}},
+            {RES_MATCH_RANGE: {START: 0, END: 5}},
+            {RES_MATCH_RANGE: {START: 0, END: 8}},
+            {RES_MATCH_RANGE: {START: 2, END: 5}},
+            {RES_MATCH_RANGE: {START: 0, END: 8}},
+        ]
 
         # When
-        perms = _exhaustive_slots_permutations(n_builtins,
-                                               possible_slots_names)
+        disambiguated_entities = _disambiguate_builtin_entities(
+            builtin_entities)
 
         # Then
-        expected_perms = {
-            ("a", "a"),
-            ("a", "b"),
-            ("a", "O"),
-            ("b", "b"),
-            ("b", "a"),
-            ("b", "O"),
-            ("O", "a"),
-            ("O", "b"),
-            ("O", "O"),
-        }
-        self.assertSetEqual(set(perms), expected_perms)
+        expected_entities = [
+            {RES_MATCH_RANGE: {START: 0, END: 8}},
+            {RES_MATCH_RANGE: {START: 0, END: 8}},
+            {RES_MATCH_RANGE: {START: 10, END: 17}},
+        ]
 
-    @patch("snips_nlu.slot_filler.crf_slot_filler"
-           "._exhaustive_slots_permutations")
-    def test_slot_permutations_should_be_exhaustive(
-            self, mocked_exhaustive_slots):
-        # Given
-        n_builtins = 2
-        possible_slots_names = ["a", "b"]
-        exhaustive_permutations_threshold = 100
-
-        # When
-        _generate_slots_permutations(n_builtins, possible_slots_names,
-                                     exhaustive_permutations_threshold)
-
-        # Then
-        mocked_exhaustive_slots.assert_called_once()
-
-    @patch("snips_nlu.slot_filler.crf_slot_filler"
-           "._conservative_slots_permutations")
-    def test_slot_permutations_should_be_conservative(
-            self, mocked_conservative_slots):
-        # Given
-        n_builtins = 2
-        possible_slots_names = ["a", "b"]
-        exhaustive_permutations_threshold = 8
-
-        # When
-        _generate_slots_permutations(n_builtins, possible_slots_names,
-                                     exhaustive_permutations_threshold)
-
-        # Then
-        mocked_conservative_slots.assert_called_once()
+        self.assertListEqual(expected_entities, disambiguated_entities)
 
     def test_generate_slots_permutations(self):
         # Given
-        possible_slots = ["slot1", "slot22"]
-        configs = [
-            {
-                "n_builtins_in_sentence": 0,
-                "exhaustive_permutations_threshold": 10,
-                "slots": []
-            },
-            {
-                "n_builtins_in_sentence": 1,
-                "exhaustive_permutations_threshold": 10,
-                "slots": [
-                    ("slot1",),
-                    ("slot22",),
-                    ("O",)
-                ]
-            },
-            {
-                "n_builtins_in_sentence": 2,
-                "exhaustive_permutations_threshold": 4,
-                "slots": [
-                    ("slot1", "slot22"),
-                    ("slot22", "slot1"),
-                    ("slot1", "O"),
-                    ("O", "slot1"),
-                    ("slot22", "O"),
-                    ("O", "slot22"),
-                    ("O", "O")
-                ]
-            },
-            {
-                "n_builtins_in_sentence": 2,
-                "exhaustive_permutations_threshold": 100,
-                "slots": [
-                    ("O", "O"),
-                    ("O", "slot1"),
-                    ("O", "slot22"),
-                    ("slot1", "O"),
-                    ("slot1", "slot1"),
-                    ("slot1", "slot22"),
-                    ("slot22", "O"),
-                    ("slot22", "slot1"),
-                    ("slot22", "slot22"),
-                ]
-            },
-            {
-                "n_builtins_in_sentence": 3,
-                "exhaustive_permutations_threshold": 5,
-                "slots": [
-                    ("slot1", "slot22", "O"),
-                    ("slot22", "slot1", "O"),
-                    ("slot22", "O", "slot1"),
-                    ("slot1", "O", "slot22"),
-                    ("O", "slot22", "slot1"),
-                    ("O", "slot1", "slot22"),
-                    ("O", "O", "slot1"),
-                    ("O", "O", "slot22"),
-                    ("O", "slot1", "O"),
-                    ("O", "slot22", "O"),
-                    ("slot1", "O", "O"),
-                    ("slot22", "O", "O"),
-                    ("O", "O", "O")
-                ]
-            }
+        slot_name_mapping = {
+            "start_date": "snips/datetime",
+            "end_date": "snips/datetime",
+            "temperature": "snips/temperature"
+        }
+        grouped_entities = [
+            [
+                {ENTITY_KIND: "snips/datetime"},
+                {ENTITY_KIND: "snips/temperature"}
+            ],
+            [
+                {ENTITY_KIND: "snips/temperature"}
+            ]
         ]
 
-        for conf in configs:
-            # When
-            slots = _generate_slots_permutations(
-                conf["n_builtins_in_sentence"],
-                possible_slots,
-                conf["exhaustive_permutations_threshold"])
-            # Then
-            self.assertSetEqual(set(conf["slots"]), set(slots))
+        # When
+        slots_permutations = set(
+            "||".join(perm) for perm in
+            _get_slots_permutations(grouped_entities, slot_name_mapping))
+
+        # Then
+        expected_permutations = {
+            "start_date||temperature",
+            "end_date||temperature",
+            "temperature||temperature",
+            "O||temperature",
+            "start_date||O",
+            "end_date||O",
+            "temperature||O",
+            "O||O",
+        }
+        self.assertSetEqual(expected_permutations, slots_permutations)
+
+    def test_should_fit_and_parse_empty_intent(self):
+        # Given
+        dataset = {
+            "intents": {
+                "dummy_intent": {
+                    "utterances": [
+                        {
+                            "data": [
+                                {
+                                    "text": " "
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            "language": "en",
+            "entities": dict()
+        }
+
+        slot_filler = CRFSlotFiller()
+
+        # When
+        slot_filler.fit(dataset, "dummy_intent")
+        slot_filler.get_slots("ya")
+
+    def test___ensure_safe(self):
+        unsafe_examples = [
+            ([[]], [[]]),
+            ([[], []], [[], []]),
+        ]
+
+        # We don't assert anything here but it segfault otherwise
+        for X, Y in unsafe_examples:
+            X, Y = _ensure_safe(X, Y)
+            model = CRF().fit(X, Y)
+            model.predict_single([""])

@@ -2,11 +2,10 @@
 from __future__ import unicode_literals
 
 from builtins import str
-
 from mock import mock
 
 from snips_nlu.constants import (
-    ENTITIES, AUTOMATICALLY_EXTENSIBLE, UTTERANCES, CAPITALIZE, SNIPS_DATETIME)
+    AUTOMATICALLY_EXTENSIBLE, CAPITALIZE, ENTITIES, SNIPS_DATETIME, UTTERANCES)
 from snips_nlu.dataset import validate_and_format_dataset
 from snips_nlu.tests.utils import SnipsTest
 
@@ -31,14 +30,13 @@ class TestDataset(SnipsTest):
             },
             "entities": {},
             "language": "en",
-            "snips_nlu_version": "1.1.1"
         }
 
         # When/Then
         with self.assertRaises(KeyError) as ctx:
             validate_and_format_dataset(dataset)
-        self.assertEqual(str(ctx.exception.args[0]),
-                         "Expected chunk to have key: 'slot_name'")
+        self.assertEqual("Expected chunk to have key: 'slot_name'",
+                         str(ctx.exception.args[0]))
 
     def test_unknown_entity_should_raise_exception(self):
         # Given
@@ -66,14 +64,12 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "1.1.1"
         }
 
         # When/Then
         with self.assertRaises(KeyError) as ctx:
             validate_and_format_dataset(dataset)
-        self.assertEqual(str(ctx.exception.args[0]),
-                         "Expected entities to have key: 'unknown_entity'")
+        self.assertEqual("Expected entities to have key: 'unknown_entity'", str(ctx.exception.args[0]))
 
     def test_missing_entity_key_should_raise_exception(self):
         # Given
@@ -86,14 +82,12 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "1.1.1"
         }
 
         # When/Then
         with self.assertRaises(KeyError) as ctx:
             validate_and_format_dataset(dataset)
-        self.assertEqual(str(ctx.exception.args[0]),
-                         "Expected entity to have key: 'use_synonyms'")
+        self.assertEqual("Expected entity to have key: 'use_synonyms'", str(ctx.exception.args[0]))
 
     def test_invalid_language_should_raise_exception(self):
         # Given
@@ -101,13 +95,12 @@ class TestDataset(SnipsTest):
             "intents": {},
             "entities": {},
             "language": "eng",
-            "snips_nlu_version": "1.1.1"
         }
 
         # When/Then
         with self.assertRaises(ValueError) as ctx:
             validate_and_format_dataset(dataset)
-        self.assertEqual(str(ctx.exception.args[0]), "Unknown language: 'eng'")
+        self.assertEqual("Unknown language: 'eng'", str(ctx.exception.args[0]))
 
     @mock.patch("snips_nlu.dataset.get_string_variations")
     def test_should_format_dataset_by_adding_synonyms(
@@ -132,7 +125,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "1.1.1"
         }
 
         expected_dataset = {
@@ -150,7 +142,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "1.1.1",
             "validated": True
         }
 
@@ -158,7 +149,7 @@ class TestDataset(SnipsTest):
         dataset = validate_and_format_dataset(dataset)
 
         # Then
-        self.assertDictEqual(dataset, expected_dataset)
+        self.assertDictEqual(expected_dataset, dataset)
 
     @mock.patch("snips_nlu.dataset.get_string_variations")
     def test_should_format_dataset_by_adding_entity_values(
@@ -212,7 +203,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "1.1.1"
         }
 
         expected_dataset = {
@@ -261,7 +251,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "1.1.1",
             "validated": True
         }
 
@@ -269,7 +258,7 @@ class TestDataset(SnipsTest):
         dataset = validate_and_format_dataset(dataset)
 
         # Then
-        self.assertEqual(dataset, expected_dataset)
+        self.assertEqual(expected_dataset, dataset)
 
     @mock.patch("snips_nlu.dataset.get_string_variations")
     def test_should_add_missing_reference_entity_values_when_not_use_synonyms(
@@ -323,7 +312,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.0.1"
         }
 
         expected_dataset = {
@@ -369,7 +357,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.0.1",
             "validated": True
         }
 
@@ -377,7 +364,7 @@ class TestDataset(SnipsTest):
         dataset = validate_and_format_dataset(dataset)
 
         # Then
-        self.assertEqual(dataset, expected_dataset)
+        self.assertEqual(expected_dataset, dataset)
 
     def test_should_not_require_data_for_builtin_entities(self):
         # Given
@@ -404,7 +391,6 @@ class TestDataset(SnipsTest):
                 SNIPS_DATETIME: {}
             },
             "language": "en",
-            "snips_nlu_version": "0.1.0"
         }
 
         # When / Then
@@ -467,7 +453,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.0.1"
         }
 
         expected_dataset = {
@@ -513,7 +498,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.0.1",
             "validated": True
         }
 
@@ -521,7 +505,7 @@ class TestDataset(SnipsTest):
         dataset = validate_and_format_dataset(dataset)
 
         # Then
-        self.assertEqual(dataset, expected_dataset)
+        self.assertEqual(expected_dataset, dataset)
 
     @mock.patch("snips_nlu.dataset.get_string_variations")
     def test_should_add_capitalize_field(
@@ -600,7 +584,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.0.1"
         }
 
         expected_dataset = {
@@ -683,7 +666,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.0.1",
             "validated": True
         }
 
@@ -691,7 +673,7 @@ class TestDataset(SnipsTest):
         dataset = validate_and_format_dataset(dataset)
 
         # Then
-        self.assertDictEqual(dataset, expected_dataset)
+        self.assertDictEqual(expected_dataset, dataset)
 
     @mock.patch("snips_nlu.dataset.get_string_variations")
     def test_should_normalize_synonyms(
@@ -725,7 +707,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.1.0"
         }
 
         expected_dataset = {
@@ -749,13 +730,13 @@ class TestDataset(SnipsTest):
                     "utterances": {
                         "ëntity": "ëNtity",
                         "Ëntity": "ëNtity",
+                        "ëNtity": "ëNtity"
                     },
                     "automatically_extensible": True,
                     "capitalize": False
                 }
             },
             "language": "en",
-            "snips_nlu_version": "0.1.0",
             "validated": True
         }
 
@@ -763,7 +744,7 @@ class TestDataset(SnipsTest):
         dataset = validate_and_format_dataset(dataset)
 
         # Then
-        self.assertDictEqual(dataset, expected_dataset)
+        self.assertDictEqual(expected_dataset, dataset)
 
     @mock.patch("snips_nlu.dataset.get_string_variations")
     def test_dataset_should_handle_synonyms(
@@ -788,7 +769,6 @@ class TestDataset(SnipsTest):
                 }
             },
             "language": "en",
-            "snips_nlu_version": "1.1.1"
         }
 
         # When
@@ -809,3 +789,64 @@ class TestDataset(SnipsTest):
 
         # Then
         self.assertDictEqual(dataset[ENTITIES], expected_entities)
+
+    def test_should_not_avoid_synomyms_variations_collision(self):
+        # Given
+        dataset = {
+            "intents": {
+                "dummy_but_tricky_intent": {
+                    "utterances": [
+                        {
+                            "data": [
+                                {
+                                    "text": "dummy_value",
+                                    "entity": "dummy_but_tricky_entity",
+                                    "slot_name": "dummy_but_tricky_slot"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            "entities": {
+                "dummy_but_tricky_entity": {
+                    "data": [
+                        {
+                            "value": "a",
+                            "synonyms": [
+                                "favorïte"
+                            ]
+                        },
+                        {
+                            "value": "b",
+                            "synonyms": [
+                                "favorite"
+                            ]
+                        }
+                    ],
+                    "use_synonyms": True,
+                    "automatically_extensible": False
+                }
+            },
+            "language": "en",
+        }
+
+        # When
+        dataset = validate_and_format_dataset(dataset)
+
+        # Then
+        entity = dataset["entities"]["dummy_but_tricky_entity"]
+        expected_utterances = {
+            "A": "a",
+            "B": "b",
+            "DummyValue": "dummy_value",
+            "Dummy_Value": "dummy_value",
+            "Favorïte": "a",
+            "a": "a",
+            "b": "b",
+            "dummy_value": "dummy_value",
+            "dummyvalue": "dummy_value",
+            "favorite": "b",
+            "favorïte": "a"
+        }
+        self.assertDictEqual(expected_utterances, entity["utterances"])

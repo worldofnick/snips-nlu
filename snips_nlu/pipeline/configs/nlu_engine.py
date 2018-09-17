@@ -1,8 +1,11 @@
+from __future__ import unicode_literals
+
 from builtins import map
 from copy import deepcopy
 
 from snips_nlu.pipeline.configs import ProcessingUnitConfig
 from snips_nlu.pipeline.processing_unit import get_processing_unit_config
+from snips_nlu.resources import merge_required_resources
 from snips_nlu.utils import classproperty
 
 
@@ -35,6 +38,13 @@ class NLUEngineConfig(ProcessingUnitConfig):
     def unit_name(cls):  # pylint:disable=no-self-argument
         from snips_nlu.nlu_engine.nlu_engine import SnipsNLUEngine
         return SnipsNLUEngine.unit_name
+
+    def get_required_resources(self):
+        resources = dict()
+        for config in self.intent_parsers_configs:
+            resources = merge_required_resources(
+                resources, config.get_required_resources())
+        return resources
 
     def to_dict(self):
         return {
